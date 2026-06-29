@@ -1,0 +1,13 @@
+# Computer Vision & ML
+ultralytics==8.1.0      # YOLOv11 (использует API v8)
+opencv-python-headless  # OpenCV без GUI (идеально для серверов)
+albumentations          # Для аугментации
+matplotlib              # Для графиков в ноутбуке
+jupyter                 # Для MVP
+
+# Database & Architecture
+SQLAlchemy              # ORM для SQLite
+pydantic                # Для валидации конфигов
+requests                # Для HTTP POST
+APScheduler             # Планировщик задач (вместо while True)
+python-telegram-bot     # Для алертов

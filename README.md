@@ -112,14 +112,3 @@ python monitor.py
 * **Сеть (ERP):** `tenacity.retry` с `wait_exponential` гарантирует, что при падении 1С система будет экспоненциально увеличивать интервалы между попытками, не "заспамливая" сеть и не падая с `Exception`.
 * **Логирование:** Дублирование логов в `stdout` и файл `bunker_vision.log`.
 ```
-
-### 📌 Примечание к `requirements.txt`
-Для работы refactored-кода убедитесь, что в вашем `requirements.txt` добавлена библиотека для ретраев:
-```text
-opencv-python
-sqlalchemy
-requests
-tenacity
-apscheduler
-ultralytics
-```

@@ -1,6 +1,9 @@
 import requests
 import logging
-from src.db import DBManager
+from typing import List
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from db import DBManager, Measurement
 
 logger = logging.getLogger(__name__)
 
@@ -9,36 +12,37 @@ class ERPSender:
         self.erp_url = erp_url
         self.db = db_manager
 
-    def process_unsent_data(self):
-        """
-        Читает неотправленные данные из БД и пытается отправить их в учетную систему.
-        """
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(requests.RequestException),
+        reraise=True
+    )
+    def _send_record(self, payload: dict) -> requests.Response:
+        """Отправляет одну запись с exponential backoff."""
+        response = requests.post(self.erp_url, json=payload, timeout=5)
+        response.raise_for_status()
+        return response
+
+    def process_unsent_data(self) -> None:
+        """Читает неотправленные данные из БД и пытается отправить их в 1С."""
         unsent_records = self.db.get_unsent_measurements()
         if not unsent_records:
             return
 
         successful_ids = []
-
         for record in unsent_records:
             payload = {
                 "bunker_id": record.bunker_id,
                 "level_pct": record.level,
                 "timestamp": record.timestamp.isoformat()
             }
-            
             try:
-                # Таймаут обязателен! Иначе скрипт зависнет, если ERP "лежит"
-                response = requests.post(self.erp_url, json=payload, timeout=5)
-                
-                if response.status_code == 200:
-                    successful_ids.append(record.id)
-                else:
-                    logger.warning(f"ERP returned status {response.status_code} for record {record.id}")
-                    
+                self._send_record(payload)
+                successful_ids.append(record.id)
             except requests.RequestException as e:
-                logger.error(f"Network error while sending to ERP: {e}")
-                break # Прерываем цикл, нет смысла долбить лежащую сеть
+                logger.error(f"Failed to send record {record.id} to ERP after retries: {e}")
+                break  # Прерываем цикл, если ERP недоступен, чтобы не долбить сеть
 
-        # Помечаем в БД только те, что реально ушли
         if successful_ids:
             self.db.mark_as_sent(successful_ids)

@@ -1,14 +1,22 @@
 {
-    "erp_url": "http://localhost:8000/api/bunker_levels",
-    "telegram": {
-        "bot_token": "YOUR_TOKEN",
-        "chat_id": "YOUR_CHAT_ID"
-    },
-    "cameras": [
-        {
-            "bunker_id": "bunker15",
-            "rtsp_url": "data/raw/50.png",
-            "roi_ratio": 0.55
-        }
+"erp_url": "http://192.168.1.100:8080/api/v1/bunker_telemetry",
+"db_path": "sqlite:///data/bunker_buffer.db",
+"model_path": "runs/models/bunker_poc/weights/best.pt",
+"poll_interval_minutes": 30,
+"telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_CHAT_ID"
+},
+"cameras": [
+    {
+    "bunker_id": "BUNKER_15",
+    "rtsp_url": "rtsp://admin:password@192.168.1.50:554/stream1",
+    "roi_ratio": [
+        0.0,
+        0.0,
+        0.55,
+        1.0
     ]
+}
+]
 }

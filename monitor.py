@@ -1,85 +1,82 @@
-# monitor.py
-
-'''
-Оркестратор и точка входа службы
-Этот файл связывает всё воедино. 
-Используем APScheduler для запуска задачи каждые 30 минут, как просят в FR-01.
-'''
-
 import sys
-import json
 import logging
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from src.db import DBManager
-from src.sender import ERPSender
-from src.model import BunkerModel
-from src.capture import CameraCapture
-from src.telegram import TelegramAlerts
+from config import AppConfig
+from db import DBManager
+from sender import ERPSender
+from model import BunkerModel  # Предполагается, что model.py существует
+from capture import CameraCapture
+from telegram import TelegramAlerts
 
-# Настройка промышленного логирования (FR-07)
+# Настройка логирования (в файл и консоль)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
-        logging.FileHandler("bunker_vision.log"),
+        logging.FileHandler("bunker_vision.log", encoding="utf-8"),
         logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger("Monitor")
 
-# 1. Загрузка конфигурации
-def load_config():
-    with open("cameras_config.json", "r") as f:
-        return json.load(f)
+class BunkerVisionPipeline:
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.db = DBManager(config.db_path)
+        self.sender = ERPSender(config.erp_url, self.db)
+        self.model = BunkerModel(config.model_path)
+        self.tg_alerts = TelegramAlerts(config.telegram.bot_token, config.telegram.chat_id)
 
-CONFIG = load_config()
+    def run_cycle(self):
+        """Основной пайплайн, запускаемый по расписанию"""
+        logger.info("- Starting monitoring cycle -")
 
-# 2. Инициализация модулей
-db = DBManager("sqlite:///data/bunker_buffer.db")
-sender = ERPSender(CONFIG["erp_url"], db)
-model = BunkerModel("runs/models/bunker_poc/weights/best.pt")
-tg_alerts = TelegramAlerts(CONFIG["telegram"]["bot_token"], CONFIG["telegram"]["chat_id"])
-
-def job_pipeline():
-    """Основной пайплайн, запускаемый по расписанию"""
-    logger.info("--- Starting monitoring cycle ---")
-    
-    # Шаг 1: Опрос камер и инференс
-    for cam in CONFIG["cameras"]:
-        bunker_id = cam["bunker_id"]
-        rtsp_url = cam["rtsp_url"]
-        
-        # Получаем кадр (FR-01, FR-08)
-        frame = CameraCapture.get_frame(rtsp_url, cam.get("roi_ratio", 0.55))
-        if frame is None:
-            continue
+        # Шаг 1: Опрос камер и инференс
+        for cam in self.config.cameras:
+            bunker_id = cam.bunker_id
+            rtsp_url = cam.rtsp_url
             
-        # Инференс (FR-02)
-        level, confidence = model.predict(frame)
+            frame = CameraCapture.get_frame(rtsp_url, cam.roi_ratio)
+            if frame is None:
+                logger.warning(f"Skipping bunker {bunker_id} due to capture failure.")
+                continue
+
+            level, confidence = self.model.predict(frame)
+            
+            if level != -1:
+                self.db.add_measurement(bunker_id, level, confidence)
+                self.tg_alerts.send_alert(bunker_id, level)
+
+        # Шаг 2: Выгрузка накопленных данных в 1С (ERP)
+        logger.info("Pushing data to ERP...")
+        self.sender.process_unsent_data()
         
-        if level != -1:
-            # Сохранение в локальный буфер (FR-03)
-            db.add_measurement(bunker_id, level, confidence)
-            # Отправка алертов (FR-05)
-            tg_alerts.send_alert(bunker_id, level)
+        logger.info("- Cycle completed -")
 
-    # Шаг 2: Выгрузка накопленных данных в 1С (FR-04)
-    logger.info("Pushing data to ERP...")
-    sender.process_unsent_data()
-    logger.info("--- Cycle completed ---")
+def main():
+    logger.info("BunkerVision Service Starting...")
+    
+    try:
+        config = AppConfig.load("cameras_config.json")
+    except Exception as e:
+        logger.critical(f"Failed to load configuration: {e}")
+        sys.exit(1)
 
-if __name__ == "__main__":
-    logger.info("BunkerVision Service Started.")
+    pipeline = BunkerVisionPipeline(config)
     
     # Для теста прогоняем один раз сразу
-    job_pipeline()
-    
-    # Настраиваем планировщик на запуск каждые 30 минут (FR-01)
+    pipeline.run_cycle()
+
+    # Настраиваем планировщик APScheduler
     scheduler = BlockingScheduler()
-    scheduler.add_job(job_pipeline, 'interval', minutes=30)
+    scheduler.add_job(pipeline.run_cycle, 'interval', minutes=config.poll_interval_minutes)
     
+    logger.info(f"Scheduler started. Interval: {config.poll_interval_minutes} mins.")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         logger.info("BunkerVision Service Stopped.")
+
+if __name__ == "__main__":
+    main()

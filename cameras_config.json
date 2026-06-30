@@ -1,0 +1,14 @@
+{
+    "erp_url": "http://localhost:8000/api/bunker_levels",
+    "telegram": {
+        "bot_token": "YOUR_TOKEN",
+        "chat_id": "YOUR_CHAT_ID"
+    },
+    "cameras": [
+        {
+            "bunker_id": "bunker15",
+            "rtsp_url": "data/raw/50.png",
+            "roi_ratio": 0.55
+        }
+    ]
+}
